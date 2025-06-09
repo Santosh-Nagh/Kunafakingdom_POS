@@ -1,106 +1,107 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
-export async function GET(request: Request) {
-  const supabase = createClient();
+// Helper to remove undefined/null fields
+const clean = (obj: any) =>
+  Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== undefined && v !== null));
 
-  const { data: { user } } = await supabase.auth.getUser();
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      id,
-      customer_id,
-      total_amount,
-      user_uid,
-      status,
-      created_at,
-      customer:customer_id (
-        name
-      )
-      `)
-    .eq('user_uid', user.id)
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  return NextResponse.json(data)
-}
-
-export async function POST(request: Request) {
-  const supabase = createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const { customerId, paymentMethodId, products, total } = await request.json();
-
+export async function POST(req: NextRequest) {
   try {
-    // Insert the order
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .insert({
-        customer_id: customerId,
-        total_amount: total,
-        user_uid: user.id,
-        status: 'completed'
-      })
-      .select('*, customer:customers(name)')
-      .single();
+    const body = await req.json();
 
-    if (orderError) {
-      throw orderError;
+    if (!body.products || !Array.isArray(body.products) || body.products.length === 0) {
+      return NextResponse.json(
+        { error: "No products array in request, or it's empty." },
+        { status: 400 }
+      );
     }
 
-    // Insert the order items
-    const orderItems = products.map((product: { id: number, quantity: number, price: number }) => ({
-      order_id: orderData.id,
-      product_id: product.id,
-      quantity: product.quantity,
-      price: product.price
-    }));
+    const orderData: any = {
+      branches: { connect: { id: body.branch_id } },
+      source: "in_store",
+      customer_name: body.customerName,
+      customer_phone: body.customerPhone,
+      aggregator_id: body.aggregatorOrderId,
+      status: "completed",
+      order_items: {
+        create: body.products.map((p: any) =>
+          clean({
+            product_id: p.id,
+            quantity: p.qty ?? p.quantity ?? 1,
+            unit_price: p.unit_price ?? p.price ?? 0,
+            discount_amt: p.discount_amt ?? 0,
+          })
+        ),
+      },
+      payments: {
+        create: [
+          clean({
+            method: body.paymentMethod,
+            amount: body.total,
+            status: "paid",
+            paid_at: new Date(),
+            change_given: body.changeGiven,
+            cash_given: body.cashGiven,
+          }),
+        ],
+      },
+      order_charges: body.charges
+        ? {
+            create: Object.entries(body.charges).map(([type, amount]: [string, any]) =>
+              clean({
+                type,
+                amount: Number(amount) || 0,
+              })
+            ),
+          }
+        : undefined,
+      order_taxes: body.gst
+        ? {
+            create: [
+              clean({
+                type: "GST",
+                percent: 18,
+                amount: Number(body.gst) || 0,
+              }),
+            ],
+          }
+        : undefined,
+      order_coupons:
+        body.discountValue || body.discountCode
+          ? {
+              create: [
+                clean({
+                  code: body.discountCode,
+                  value: Number(body.discountValue) || 0,
+                }),
+              ],
+            }
+          : undefined,
+      order_notes: body.orderNotes, // <-- MATCH YOUR PRISMA COLUMN
+      created_at: new Date(),
+    };
 
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(orderItems);
+    Object.keys(orderData).forEach(
+      (key) => (orderData[key] === undefined || orderData[key] === null) && delete orderData[key]
+    );
 
-    if (itemsError) {
-      // If there's an error inserting order items, delete the order
-      await supabase.from('orders').delete().eq('id', orderData.id);
-      throw itemsError;
-    }
+    const newOrder = await prisma.orders.create({
+      data: orderData,
+      include: {
+        order_items: true,
+        payments: true,
+        order_charges: true,
+        order_taxes: true,
+        order_coupons: true,
+      },
+    });
 
-    // Insert the transaction record
-    const { error: transactionError } = await supabase
-      .from('transactions')
-      .insert({
-        order_id: orderData.id,
-        payment_method_id: paymentMethodId,
-        amount: total,
-        user_uid: user.id,
-        status: 'completed',
-        category: 'selling',
-        type: 'income',
-        description: `Payment for order #${orderData.id}`
-      });
-
-    if (transactionError) {
-      // If there's an error inserting the transaction, delete the order and order items
-      await supabase.from('orders').delete().eq('id', orderData.id);
-      await supabase.from('order_items').delete().eq('order_id', orderData.id);
-      throw transactionError;
-    }
-
-    return NextResponse.json(orderData);
+    return NextResponse.json({ ok: true, order: newOrder });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    console.error("Order API error:", error);
+    return NextResponse.json(
+      { error: "Server error while creating order." },
+      { status: 500 }
+    );
   }
 }

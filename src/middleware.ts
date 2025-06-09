@@ -1,19 +1,30 @@
-import { type NextRequest } from 'next/server'
-import { updateSession } from '@/lib/supabase/middleware'
+import { NextRequest, NextResponse } from "next/server";
+import jwt from "jsonwebtoken";
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request)
+const JWT_SECRET = process.env.JWT_SECRET || "kunafasecret123";
+
+export function middleware(request: NextRequest) {
+  const session = request.cookies.get("session")?.value;
+
+  if (request.nextUrl.pathname === "/login" && session) {
+    try {
+      const user: any = jwt.verify(session, JWT_SECRET);
+
+      // Redirect to dashboard based on role
+      if (user.role === "admin") {
+        return NextResponse.redirect(new URL("/admin", request.url));
+      }
+      if (user.role === "helper") {
+        return NextResponse.redirect(new URL("/orders", request.url));
+      }
+    } catch (e) {
+      // Invalid session, do nothing
+    }
+  }
+  // For all other cases, continue as normal
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * Feel free to modify this pattern to include more paths.
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
-}
+  matcher: ["/login"],
+};

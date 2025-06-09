@@ -1,74 +1,45 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from "next/server";
 
-export async function PUT(
-  request: Request,
-  { params }: { params: { orderId: string } }
-) {
-  const supabase = createClient();
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
 
-  const { data: { user } } = await supabase.auth.getUser();
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Log for debugging
+    console.log("Order API Body:", JSON.stringify(body, null, 2));
+    console.log("products:", body.products);
+
+    // Check if products is correct
+    if (!body.products || !Array.isArray(body.products) || body.products.length === 0) {
+      return NextResponse.json(
+        { error: "No products array in request, or it's empty." },
+        { status: 400 }
+      );
+    }
+
+    // Test: print first product
+    console.log("First product:", body.products[0]);
+
+    // Calculate subtotal
+    const subtotal = body.products.reduce(
+      (sum: number, p: any) =>
+        sum +
+        (Number(p.price) || Number(p.unit_price) || 0) *
+          (Number(p.qty || p.quantity) || 1),
+      0
+    );
+
+    return NextResponse.json({
+      ok: true,
+      message: "Order received",
+      subtotal,
+      products: body.products,
+      body,
+    });
+  } catch (error) {
+    console.error("Order API error:", error);
+    return NextResponse.json(
+      { error: "Server error while creating order.", details: String(error) },
+      { status: 500 }
+    );
   }
-
-  const updatedOrder = await request.json();
-  const orderId = params.orderId;
-
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ ...updatedOrder, user_uid: user.id })
-    .eq('id', orderId)
-    .eq('user_uid', user.id)
-    .select('*, customer:customers(name)')
-    .single()
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  if (!data) {
-    return NextResponse.json({ error: 'Order not found or not authorized' }, { status: 404 })
-  }
-
-  return NextResponse.json(data)
-}
-
-export async function DELETE(
-  request: Request,
-  { params }: { params: { orderId: string } }
-) {
-  const supabase = createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const orderId = params.orderId;
-
-  // First, delete related order_items
-  const { error: orderItemsError } = await supabase
-    .from('order_items')
-    .delete()
-    .eq('order_id', orderId)
-
-  if (orderItemsError) {
-    return NextResponse.json({ error: orderItemsError.message }, { status: 500 })
-  }
-
-  // Then, delete the order
-  const { error: orderError } = await supabase
-    .from('orders')
-    .delete()
-    .eq('id', orderId)
-    .eq('user_uid', user.id)
-
-  if (orderError) {
-    return NextResponse.json({ error: orderError.message }, { status: 500 })
-  }
-
-  return NextResponse.json({ message: 'Order and related items deleted successfully' })
 }
