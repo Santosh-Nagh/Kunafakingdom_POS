@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// You can change this mapping as needed for your branches!
+const BRANCH_PREFIXES: Record<string, string> = {
+  // "branch_id": "PREFIX"
+  // Example (replace with your actual branch ids from DB):
+  "Kompally-id-goes-here": "KK-KOM",
+  "Banjara-id-goes-here": "KK-BAN",
+  "Madhapur-id-goes-here": "KK-MAD"
+};
+// Or, fallback if not set:
+const DEFAULT_PREFIX = "KK-UNK";
+
 // Helper to remove undefined/null fields
 const clean = (obj: any) =>
   Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== undefined && v !== null));
@@ -16,8 +27,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // --- Step 1: Get current branch id and prefix ---
+    const branchId = body.branch_id;
+    let prefix = DEFAULT_PREFIX;
+    // Try to fetch branch name for prefix if not mapped:
+    if (branchId) {
+      if (BRANCH_PREFIXES[branchId]) {
+        prefix = BRANCH_PREFIXES[branchId];
+      } else {
+        const branch = await prisma.branches.findUnique({ where: { id: branchId } });
+        if (branch?.name) {
+          prefix = "KK-" + branch.name.slice(0, 3).toUpperCase();
+        }
+      }
+    }
+
+    // --- Step 2: Find last invoice_number for this branch ---
+    let invoiceNumber = 1;
+    if (branchId) {
+      const lastOrder = await prisma.orders.findFirst({
+        where: { branch_id: branchId, invoice_prefix: prefix },
+        orderBy: { invoice_number: "desc" },
+        select: { invoice_number: true }
+      });
+      if (lastOrder?.invoice_number && !isNaN(lastOrder.invoice_number)) {
+        invoiceNumber = lastOrder.invoice_number + 1;
+      }
+    }
+
+    // --- Step 3: Construct orderData as before, with new fields ---
     const orderData: any = {
-      branches: { connect: { id: body.branch_id } },
+      branches: { connect: { id: branchId } },
       source: "in_store",
       customer_name: body.customerName,
       customer_phone: body.customerPhone,
@@ -77,10 +117,14 @@ export async function POST(req: NextRequest) {
               ],
             }
           : undefined,
-      order_notes: body.orderNotes, // <-- MATCH YOUR PRISMA COLUMN
+      order_notes: body.orderNotes,
       created_at: new Date(),
+      // --- Add these ---
+      invoice_number: invoiceNumber,
+      invoice_prefix: prefix
     };
 
+    // Remove any undefined/null fields:
     Object.keys(orderData).forEach(
       (key) => (orderData[key] === undefined || orderData[key] === null) && delete orderData[key]
     );

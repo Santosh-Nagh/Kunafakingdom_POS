@@ -115,6 +115,9 @@ model orders {
   payments       payments[]
   transactions   transactions[]
   order_notes    String?
+  invoice_number Int?       // Sequential per branch
+  invoice_prefix String?    // e.g., "KK-KOM" for Kompally
+
 
 }
 

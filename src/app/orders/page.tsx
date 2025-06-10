@@ -1,11 +1,12 @@
 // src/app/orders/page.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 type Branch = { id: string; name: string };
 type Category = { id: string; name: string };
@@ -47,6 +48,11 @@ export default function OrdersPage() {
   // UI: Search/filter
   const [search, setSearch] = useState("");
 
+  // Invoice modal state
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoiceData, setInvoiceData] = useState<any>(null);
+  const printRef = useRef<HTMLDivElement>(null);
+
   // --- Load branches, categories, products
   useEffect(() => {
     setLoading(true);
@@ -55,7 +61,6 @@ export default function OrdersPage() {
       fetch("/api/categories").then(res => res.json()),
       fetch("/api/products").then(res => res.json())
     ]).then(([branchesRaw, categoriesRaw, productsRaw]) => {
-      // --- Fix: Always handle array/object for all API responses ---
       const branchesArr = Array.isArray(branchesRaw)
         ? branchesRaw
         : (branchesRaw && branchesRaw.branches ? branchesRaw.branches : []);
@@ -121,6 +126,38 @@ export default function OrdersPage() {
     return null;
   }
 
+  // --- Handle print
+  function handlePrint() {
+    if (!printRef.current) return;
+    const printContents = printRef.current.innerHTML;
+    const w = window.open("", "_blank", "width=800,height=600");
+    if (!w) return;
+    w.document.write(`<html><head><title>Invoice</title>
+      <style>
+        body { font-family: Arial, sans-serif; color: #222; padding: 24px; }
+        .header { text-align: center; font-weight: bold; font-size: 24px; margin-bottom: 12px; }
+        .subheader { text-align: center; color: #888; font-size: 14px; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+        th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+        .totals td { font-weight: bold; }
+        .invoice-footer { margin-top: 32px; text-align: center; font-size: 13px; color: #666; }
+      </style>
+    </head><body>${printContents}</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  }
+
+  // --- Show Invoice Modal after successful order
+  const handleShowInvoice = (data: any) => {
+    setInvoiceData(data);
+    setInvoiceOpen(true);
+  };
+  const handleInvoiceClose = () => {
+    setInvoiceOpen(false);
+    setInvoiceData(null);
+    setOrderSuccess(false);
+  };
+
   // --- Submit order to API
   async function handleSubmitOrder() {
     setOrderError(null);
@@ -167,6 +204,7 @@ export default function OrdersPage() {
         const err = await res.json().catch(() => ({}));
         setOrderError(err?.error || "Order failed. Try again.");
       } else {
+        const data = await res.json();
         setOrderSuccess(true);
         // Reset order
         setSelectedProducts([]);
@@ -181,7 +219,8 @@ export default function OrdersPage() {
         setOrderNotes("");
         setPaymentMethod("Cash");
         setCashAmount("");
-        setTimeout(() => setOrderSuccess(false), 2000);
+        // Show invoice
+        handleShowInvoice(data.order);
       }
     } catch (err) {
       setOrderError("Order failed. Try again.");
@@ -402,7 +441,7 @@ export default function OrdersPage() {
               </div>
               {/* Errors/Success */}
               {orderError && <div className="text-red-600 mt-2">{orderError}</div>}
-              {orderSuccess && <div className="text-green-700 mt-2 font-semibold">Order placed! Ready for next customer.</div>}
+              {orderSuccess && <div className="text-green-700 mt-2 font-semibold">Order placed! Showing invoice...</div>}
               {/* Submit */}
               <Button
                 onClick={handleSubmitOrder}
@@ -417,7 +456,168 @@ export default function OrdersPage() {
             </Card>
           </div>
         )}
+        {/* --- Invoice Modal --- */}
+        <Dialog open={invoiceOpen} onOpenChange={handleInvoiceClose}>
+  <DialogContent className="max-w-xl bg-white text-black p-8 rounded-2xl border-2 border-[#fbe16d] shadow-xl">
+    {invoiceData ? (
+      <div ref={printRef}>
+        {/* Header */}
+        <div className="flex flex-col items-center mb-3">
+          <div className="text-2xl font-extrabold tracking-wide text-[#d2b74c] uppercase">Tax Invoice</div>
+          <div className="text-xl font-bold tracking-wide text-[#093427] mt-1 mb-1">Kunafa Kingdom</div>
+          <div className="text-sm text-gray-700 font-medium">
+            {branches.find(b => b.id === invoiceData.branch_id)?.name ?? ""}
+          </div>
+          <div className="text-xs text-gray-500 mb-1">
+            {branches.find(b => b.id === invoiceData.branch_id)?.address ?? ""}
+          </div>
+          <div className="text-xs text-gray-500 font-mono">
+            GSTIN: {branches.find(b => b.id === invoiceData.branch_id)?.gstin ?? "36CFVPG8105A1ZJ"}
+          </div>
+          <div className="text-xs text-gray-500 font-mono">
+            Phone: {branches.find(b => b.id === invoiceData.branch_id)?.phone ?? "9999999999"}
+          </div>
+          <div className="text-xs text-gray-400 mt-1">
+          Invoice #: {invoiceData.invoice_prefix ?? "KK-BRN"}-{invoiceData.invoice_number?.toString().padStart(5,"0") ?? ""}
+            <span className="mx-1">|</span>
+            Date: {invoiceData.created_at
+              ? new Date(invoiceData.created_at).toLocaleString("en-IN", { hour12: true })
+              : ""}
+          </div>
+        </div>
+        <div className="border-b border-gray-300 my-2" />
+
+        {/* Customer info */}
+        <div className="mb-2 text-sm grid grid-cols-2">
+          <div>
+            <b>Customer:</b> {invoiceData.customer_name || "Walk-in"}<br />
+            {invoiceData.customer_phone && <span><b>Phone:</b> {invoiceData.customer_phone}<br /></span>}
+          </div>
+          <div className="text-right">
+            <b>Supply Type:</b> B2C<br />
+            <b>Reverse Charge:</b> No<br />
+          </div>
+        </div>
+
+        {/* Table of items */}
+        <table className="w-full border text-xs my-2 border-collapse">
+          <thead>
+            <tr className="border-b bg-[#fbe16d]/40">
+              <th align="left" className="py-1 font-semibold">Item</th>
+              {/* Optional: <th align="center" className="font-semibold">HSN</th> */}
+              <th align="center" className="font-semibold">Qty</th>
+              <th align="center" className="font-semibold">Rate</th>
+              <th align="center" className="font-semibold">Amt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoiceData.order_items?.map((item: any) => (
+              <tr key={item.id} className="border-b last:border-none">
+                <td className="py-1">{products.find(p => p.id === item.product_id)?.name ?? item.product_id}</td>
+                {/* <td align="center">{products.find(p => p.id === item.product_id)?.hsn ?? "--"}</td> */}
+                <td align="center">{item.quantity}</td>
+                <td align="center">₹{Number(item.unit_price).toFixed(2)}</td>
+                <td align="center">₹{Number(item.unit_price * item.quantity).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Summary */}
+        <div className="mt-4 text-sm">
+          <div className="flex justify-between">
+            <span>Subtotal</span>
+            <span>₹{(invoiceData.order_items?.reduce(
+              (sum: number, item: any) => sum + Number(item.unit_price) * Number(item.quantity), 0) ?? 0).toFixed(2)}</span>
+          </div>
+          {invoiceData.order_charges?.filter((c: any) => Number(c.amount) > 0).map((c: any) => (
+            <div key={c.id} className="flex justify-between">
+              <span>{c.type[0].toUpperCase() + c.type.slice(1)}</span>
+              <span>₹{Number(c.amount).toFixed(2)}</span>
+            </div>
+          ))}
+          {invoiceData.order_charges?.every((c: any) => Number(c.amount) === 0) && (
+            <div className="flex justify-between"><span>Charges</span><span>₹0.00</span></div>
+          )}
+          {invoiceData.order_coupons?.some((c: any) => Number(c.value) > 0) && (
+            <div className="flex justify-between">
+              <span>Discount</span>
+              <span>-₹{invoiceData.order_coupons?.reduce((sum: number, c: any) => sum + (Number(c.value) || 0), 0).toFixed(2)}</span>
+            </div>
+          )}
+          {/* GST Split: CGST+SGST each 9% */}
+          {invoiceData.order_taxes?.length > 0 && (
+            <>
+              <div className="flex justify-between">
+                <span>CGST (9%)</span>
+                <span>₹{(Number(invoiceData.order_taxes[0].amount) / 2).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>SGST (9%)</span>
+                <span>₹{(Number(invoiceData.order_taxes[0].amount) / 2).toFixed(2)}</span>
+              </div>
+            </>
+          )}
+          <div className="border-t border-gray-400 my-1" />
+          <div className="flex justify-between font-bold text-lg">
+            <span>Total</span>
+            <span>₹{Number(invoiceData.payments?.[0]?.amount ?? 0).toFixed(2)}</span>
+          </div>
+          <div className="mt-2 text-xs text-gray-600 text-right italic">
+            Rupees in words: <b>{numberToWords(Number(invoiceData.payments?.[0]?.amount ?? 0)).replace(/\b(\w)/g, s => s.toUpperCase())} Only</b>
+          </div>
+        </div>
+
+        {/* Payment info */}
+        <div className="text-sm mt-2 mb-1">
+          <b>Payment:</b> {invoiceData.payments?.[0]?.method || ""}
+          {invoiceData.payments?.[0]?.method === "Cash" && invoiceData.payments?.[0]?.cash_given && (
+            <>
+              <span> | <b>Cash Given:</b> ₹{invoiceData.payments?.[0]?.cash_given} | <b>Change:</b> ₹{invoiceData.payments?.[0]?.change_given}</span>
+            </>
+          )}
+        </div>
+
+        {/* Buttons */}
+        <div className="mt-5 flex justify-center gap-4">
+          <Button type="button" className="rounded px-8 py-2 bg-[#fbe16d] text-[#093427] text-base font-semibold shadow" onClick={handlePrint}>
+            Print
+          </Button>
+          <Button type="button" className="rounded px-8 py-2 bg-[#d2b74c] text-[#093427] text-base font-semibold shadow" onClick={handleInvoiceClose}>
+            Next Customer
+          </Button>
+        </div>
+        <div className="mt-3 text-xs text-center text-gray-600 border-t pt-2">
+          <div>Thank you for choosing Kunafa Kingdom!</div>
+          <div>GST included as applicable. Subject to Hyderabad jurisdiction. This is a computer-generated invoice.</div>
+        </div>
+      </div>
+    ) : (
+      <div className="p-8 text-center text-gray-600">Loading invoice...</div>
+    )}
+  </DialogContent>
+</Dialog>
+
+
       </main>
     </div>
   );
+}
+
+function numberToWords(num: number) {
+  // Supports up to 9999999, quick & simple, can swap to npm 'number-to-words' if you want more
+  if (num === 0) return "zero rupees";
+  const a = [
+    '', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'
+  ];
+  const b = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  function inWords(num: number): string {
+    if (num < 20) return a[num];
+    if (num < 100) return b[Math.floor(num / 10)] + (num % 10 ? " " + a[num % 10] : "");
+    if (num < 1000) return a[Math.floor(num / 100)] + " hundred" + (num % 100 ? " and " + inWords(num % 100) : "");
+    if (num < 100000) return inWords(Math.floor(num / 1000)) + " thousand" + (num % 1000 ? " " + inWords(num % 1000) : "");
+    if (num < 10000000) return inWords(Math.floor(num / 100000)) + " lakh" + (num % 100000 ? " " + inWords(num % 100000) : "");
+    return "";
+  }
+  return inWords(num) + " rupees";
 }
