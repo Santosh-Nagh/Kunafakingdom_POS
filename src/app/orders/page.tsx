@@ -8,7 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 
-type Branch = { id: string; name: string };
+type Branch = {
+  id: string;
+  name: string;
+  address?: string;
+  contact?: string;
+  gstin?: string;
+  timezone?: string;
+};
 type Category = { id: string; name: string };
 type Product = { id: string; name: string; unit_price: number; category_id: string; is_active: boolean };
 type PaymentMethod = "Cash" | "Card" | "Upi" | "Swiggy" | "Zomato";
