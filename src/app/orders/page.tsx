@@ -482,7 +482,7 @@ export default function OrdersPage() {
             GSTIN: {branches.find(b => b.id === invoiceData.branch_id)?.gstin ?? "36CFVPG8105A1ZJ"}
           </div>
           <div className="text-xs text-gray-500 font-mono">
-            Phone: {branches.find(b => b.id === invoiceData.branch_id)?.phone ?? "9999999999"}
+            Phone: {branches.find(b => b.id === invoiceData.branch_id)?.contact ?? "9999999999"}
           </div>
           <div className="text-xs text-gray-400 mt-1">
           Invoice #: {invoiceData.invoice_prefix ?? "KK-BRN"}-{invoiceData.invoice_number?.toString().padStart(5,"0") ?? ""}
