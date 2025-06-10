@@ -4,10 +4,10 @@ import { NextResponse } from 'next/server'
 export async function GET() {
   const supabase = createClient();
 
-  // Only select what you need! (id, name)
+  // Select all necessary fields for branch info
   const { data, error } = await supabase
     .from('branches')
-    .select('id, name');
+    .select('id, name, address, gstin, contact, timezone');
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
